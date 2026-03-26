@@ -1,0 +1,47 @@
+# 全量训练/测试配置（使用现有原始CSV，不包含 sampled 演示文件）
+
+data:
+  raw_dir: "/root/autodl-tmp/cc-bishe-full/raw"
+  processed_dir: "/root/autodl-tmp/cc-bishe-full/processed"
+  threat_intel_dir: "/root/bishe/cc-bishe/data/threat_intel"
+  test_size: 0.1
+  val_size: 0.1
+  random_seed: 42
+  batch_size: 8192
+  num_workers: 0
+  file_pattern: "*.csv"
+
+model:
+  d_model: 128
+  nhead: 8
+  num_layers: 4
+  dim_feedforward: 256
+  dropout: 0.1
+  num_classes: null
+
+training:
+  epochs: 20
+  learning_rate: 0.001
+  weight_decay: 0.01
+  patience: 10
+  checkpoint_dir: "/root/autodl-tmp/cc-bishe-full/checkpoints"
+  log_dir: "/root/autodl-tmp/cc-bishe-full/logs"
+
+fusion:
+  strategy: "weighted_average"
+  alpha: 0.8
+
+threat_intel_api:
+  url: ""
+
+agent:
+  mode: "rule"
+  llm:
+    model: "claude-sonnet-4-20250514"
+    api_key: ""
+    max_tokens: 1024
+
+visualization:
+  output_dir: "/root/autodl-tmp/cc-bishe-full/results/figures"
+  dpi: 150
+  figsize: [10, 8]
