@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    balanced_accuracy_score,
     precision_score,
     recall_score,
     f1_score,
@@ -32,6 +33,7 @@ def evaluate_metrics(
     """
     metrics = {
         "accuracy": accuracy_score(y_true, y_pred),
+        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
         "precision": precision_score(
             y_true, y_pred, average=average, zero_division=0
         ),
@@ -68,6 +70,21 @@ def print_classification_report(
     )
     print(report)
     return report
+
+
+def get_classification_report_dict(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, Dict[str, float]]:
+    """返回结构化分类报告"""
+    return classification_report(
+        y_true,
+        y_pred,
+        target_names=class_names,
+        zero_division=0,
+        output_dict=True,
+    )
 
 
 def get_confusion_matrix(
