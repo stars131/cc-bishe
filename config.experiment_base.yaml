@@ -1,0 +1,61 @@
+# 批量实验基础配置
+
+data:
+  raw_dir: "/root/autodl-tmp/cc-bishe-full/raw"
+  processed_dir: "/root/autodl-tmp/cc-bishe-full/processed"
+  cache_dir: "/root/autodl-tmp/cc-bishe-cache/full_v1"
+  threat_intel_dir: "/root/bishe/cc-bishe/data/threat_intel"
+  test_size: 0.1
+  val_size: 0.1
+  random_seed: 42
+  batch_size: 32768
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+  file_pattern: "*.csv"
+
+model:
+  d_model: 128
+  nhead: 8
+  num_layers: 4
+  dim_feedforward: 256
+  dropout: 0.1
+  num_classes: null
+  fusion_strategy: "cross_attention"
+
+training:
+  epochs: 15
+  learning_rate: 0.001
+  weight_decay: 0.01
+  patience: 5
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+runtime:
+  precision: "bf16"
+  allow_tf32: true
+  cudnn_benchmark: true
+  compile: false
+
+imbalance:
+  loss: "cross_entropy"
+  use_class_weights: false
+  class_weight_power: 1.0
+  use_weighted_sampler: false
+  focal_gamma: 2.0
+
+fusion:
+  strategy: "weighted_average"
+  alpha: 0.8
+
+threat_intel_api:
+  url: ""
+
+visualization:
+  output_dir: "results/figures"
+  dpi: 150
+  figsize: [10, 8]
+
+experiment:
+  root_dir: "/root/autodl-tmp/cc-bishe-experiments"
