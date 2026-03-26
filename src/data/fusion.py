@@ -1,4 +1,4 @@
-"""特征级融合模块 - Cross-Attention融合流量特征和日志特征"""
+"""特征级融合模块 - 支持Cross-Attention与多种消融融合方式"""
 
 import torch
 import torch.nn as nn
@@ -46,8 +46,18 @@ class MultiModalFusion(nn.Module):
         d_model: int = 128,
         nhead: int = 8,
         dropout: float = 0.1,
+        fusion_strategy: str = "cross_attention",
     ):
         super().__init__()
+        valid_strategies = {
+            "cross_attention",
+            "concat",
+            "traffic_only",
+            "log_only",
+        }
+        if fusion_strategy not in valid_strategies:
+            raise ValueError(f"不支持的融合策略: {fusion_strategy}")
+        self.fusion_strategy = fusion_strategy
 
         # 特征投影层
         self.traffic_proj = nn.Sequential(
@@ -61,20 +71,21 @@ class MultiModalFusion(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # 位置编码（可学习）
-        self.traffic_pos = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
-        self.log_pos = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        if fusion_strategy in {"cross_attention", "concat"}:
+            self.fusion_proj = nn.Sequential(
+                nn.Linear(d_model * 2, d_model),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
 
-        # 双向Cross-Attention
-        self.traffic_to_log_attn = CrossAttention(d_model, nhead, dropout)
-        self.log_to_traffic_attn = CrossAttention(d_model, nhead, dropout)
+        if fusion_strategy == "cross_attention":
+            # 位置编码（可学习）
+            self.traffic_pos = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+            self.log_pos = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
 
-        # 融合投影
-        self.fusion_proj = nn.Sequential(
-            nn.Linear(d_model * 2, d_model),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+            # 双向Cross-Attention
+            self.traffic_to_log_attn = CrossAttention(d_model, nhead, dropout)
+            self.log_to_traffic_attn = CrossAttention(d_model, nhead, dropout)
 
     def forward(
         self, traffic: torch.Tensor, log: torch.Tensor
@@ -87,19 +98,27 @@ class MultiModalFusion(nn.Module):
         Returns:
             (batch, d_model) 融合后的特征向量
         """
-        # 投影到d_model维度，增加序列维度 -> (batch, 1, d_model)
-        traffic_emb = self.traffic_proj(traffic).unsqueeze(1) + self.traffic_pos
-        log_emb = self.log_proj(log).unsqueeze(1) + self.log_pos
+        traffic_proj = self.traffic_proj(traffic)
+        log_proj = self.log_proj(log)
 
-        # 双向Cross-Attention
+        if self.fusion_strategy == "traffic_only":
+            return traffic_proj
+
+        if self.fusion_strategy == "log_only":
+            return log_proj
+
+        if self.fusion_strategy == "concat":
+            fused = torch.cat([traffic_proj, log_proj], dim=-1)
+            return self.fusion_proj(fused)
+
+        # cross_attention
+        traffic_emb = traffic_proj.unsqueeze(1) + self.traffic_pos
+        log_emb = log_proj.unsqueeze(1) + self.log_pos
+
         traffic_attended = self.traffic_to_log_attn(traffic_emb, log_emb)
         log_attended = self.log_to_traffic_attn(log_emb, traffic_emb)
 
-        # 拼接并投影
-        traffic_out = traffic_attended.squeeze(1)  # (batch, d_model)
-        log_out = log_attended.squeeze(1)  # (batch, d_model)
-
-        fused = torch.cat([traffic_out, log_out], dim=-1)  # (batch, d_model*2)
-        fused = self.fusion_proj(fused)  # (batch, d_model)
-
-        return fused
+        traffic_out = traffic_attended.squeeze(1)
+        log_out = log_attended.squeeze(1)
+        fused = torch.cat([traffic_out, log_out], dim=-1)
+        return self.fusion_proj(fused)
