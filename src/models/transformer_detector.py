@@ -26,6 +26,7 @@ class TransformerDetector(nn.Module):
         num_layers: int = 4,
         dim_feedforward: int = 256,
         dropout: float = 0.1,
+        fusion_strategy: str = "cross_attention",
     ):
         super().__init__()
 
@@ -38,6 +39,7 @@ class TransformerDetector(nn.Module):
             d_model=d_model,
             nhead=nhead,
             dropout=dropout,
+            fusion_strategy=fusion_strategy,
         )
 
         # Transformer Encoder
