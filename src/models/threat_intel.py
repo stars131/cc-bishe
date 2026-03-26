@@ -38,14 +38,36 @@ class ThreatIntelScorer:
             print(f"威胁情报目录不存在: {self.threat_intel_dir}，使用空数据库")
             return
 
+        loaded_entries = 0
+        skipped_files = 0
         for fname in os.listdir(self.threat_intel_dir):
             if fname.endswith(".json"):
                 fpath = os.path.join(self.threat_intel_dir, fname)
                 with open(fpath, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.intel_db.update(data)
+                    if not isinstance(data, dict):
+                        skipped_files += 1
+                        continue
 
-        print(f"加载威胁情报条目: {len(self.intel_db)}")
+                    valid_entries = {
+                        indicator: entry
+                        for indicator, entry in data.items()
+                        if isinstance(entry, dict)
+                        and "attack_types" in entry
+                        and "risk_score" in entry
+                        and "confidence" in entry
+                    }
+                    if not valid_entries:
+                        skipped_files += 1
+                        continue
+
+                    self.intel_db.update(valid_entries)
+                    loaded_entries += len(valid_entries)
+
+        print(
+            f"加载威胁情报条目: {len(self.intel_db)}"
+            f" (有效条目累计: {loaded_entries}, 跳过文件: {skipped_files})"
+        )
 
     def _query_api(self, indicator: str) -> Optional[Dict]:
         """通过HTTP API查询威胁情报"""
