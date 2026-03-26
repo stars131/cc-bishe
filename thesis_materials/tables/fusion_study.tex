@@ -1,0 +1,22 @@
+\begin{table}[H]
+\centering
+\caption{基于已有最优 checkpoint 的融合策略扫参结果}
+\label{tab:fusionstudy}
+\begin{tabular}{p{3.3cm}p{3.5cm}ccc}
+\toprule
+来源模型 & 融合策略 & Accuracy & Balanced Accuracy & Macro-F1 \\
+\midrule
+exp05 concat & DL only & 0.9653 & 0.7025 & 0.7478 \\
+exp05 concat & weighted average($\alpha=0.6$) & 0.9765 & 0.7258 & 0.7673 \\
+exp05 concat & weighted average($\alpha=0.5$) & 0.9994 & 0.7738 & 0.7980 \\
+exp05 concat & soft voting & 0.9994 & 0.7738 & 0.7980 \\
+exp05 concat & Dempster-Shafer & 0.9991--0.9994 & 0.7739 & 0.7978--0.7981 \\
+\midrule
+exp04 weighted sampler & DL only & 0.8994 & 0.8404 & 0.5463 \\
+exp04 weighted sampler & weighted average($\alpha=0.8$) & 0.8995 & 0.8405 & 0.5468 \\
+exp04 weighted sampler & weighted average($\alpha=0.6$) & 0.8995 & 0.8881 & 0.5524 \\
+exp04 weighted sampler & soft voting & 0.8995 & 0.8881 & 0.5524 \\
+exp04 weighted sampler & Dempster-Shafer & 0.8995 & 0.8882 & 0.5525 \\
+\bottomrule
+\end{tabular}
+\end{table}
