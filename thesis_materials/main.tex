@@ -1,0 +1,198 @@
+\documentclass[UTF8,a4paper,12pt]{ctexart}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{caption}
+\geometry{margin=2.5cm}
+\title{基于多源数据融合的网络攻击检测方法研究\\论文素材草稿}
+\author{毕设实验整理稿}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+网络攻击检测是保障网络空间安全的重要基础能力。传统基于规则或人工特征的方法在攻击样式快速演化、日志语义复杂化以及多源安全信息异构化的背景下面临明显局限。围绕“基于多源数据融合的攻击检测方法”这一目标，本文以流量特征、日志特征和威胁情报为三类主要信息源，在 BCCC-CSE-CIC-IDS-2018 数据集基础上，构建了一个可复现实验流水线，对多模态深度学习检测模型、不平衡数据优化策略、威胁情报决策层融合策略以及若干关键消融设置进行了系统分析。实验结果表明，在当前实现中，简单拼接式多模态融合优于交叉注意力融合；WeightedRandomSampler 在不平衡数据场景下能够更稳定地提升少数类召回；在引入训练集统计生成的模拟威胁情报后，决策层融合策略对结果影响显著，其中软投票或等价的加权平均设置在当前数据分布下能够获得更优综合表现。进一步分析表明，现有数据划分下攻击基础设施指示器在训练集与测试集之间存在较高重叠，因此威胁情报增强结果应视为带有共享先验条件的性能上界。本文工作为后续构建更加真实、外部独立的威胁情报增强攻击检测系统提供了可复现基础。
+\end{abstract}
+
+\noindent\textbf{关键词：}网络攻击检测；多源数据融合；深度学习；类不平衡；威胁情报；Transformer
+
+\section{绪论}
+\subsection{研究背景}
+随着云计算、物联网和大规模互联网业务的发展，网络流量规模与攻击面持续扩大。网络攻击行为已呈现出自动化、持续化和多样化特征，单纯依赖静态规则库或人工经验构造特征的检测方式越来越难以满足实际需求。近年来，机器学习和深度学习方法在网络攻击检测领域得到广泛应用，其优势在于能够从复杂数据中自动提取判别性模式，并在多类别分类任务中取得优于传统方法的效果。
+
+\subsection{研究问题}
+尽管相关研究已取得一定进展，但当前网络攻击检测仍面临以下问题：
+\begin{enumerate}[leftmargin=2em]
+    \item 攻击类型分布高度不平衡，少数类样本极少，导致整体准确率与少数类召回率之间存在明显冲突。
+    \item 仅依赖单一流量特征难以充分刻画攻击上下文，日志信息、主机侧信息和威胁情报等外部信息尚未得到统一利用。
+    \item 深度学习模型在多源安全数据融合中的结构选择并不明确，不同融合策略的有效性依赖具体任务设定。
+    \item 威胁情报通常通过 API 或本地 IOC 库增强检测，但在学术实验中往往缺乏稳定、可复现的外部情报来源。
+\end{enumerate}
+
+\subsection{本文工作}
+针对上述问题，本文完成了以下工作：
+\begin{enumerate}[leftmargin=2em]
+    \item 构建了一个包含训练、评估、日志记录、配置归档、结果汇总与实验对比的可复现实验流水线。
+    \item 实现了基于流量与日志特征的多模态深度学习攻击检测模型，并比较交叉注意力与拼接融合两类结构。
+    \item 引入类权重、Focal Loss 和 WeightedRandomSampler 等不平衡优化方法，分析不同策略的收益与代价。
+    \item 设计了本地可复现的模拟威胁情报库生成流程，以替代暂不可用的在线情报 API。
+    \item 从纯深度学习性能、少数类检测能力、威胁情报决策融合效果和消融结果四个维度进行系统实验分析。
+\end{enumerate}
+
+\section{相关工作}
+\subsection{基于机器学习与深度学习的入侵检测}
+传统入侵检测方法多建立在特征工程和专家规则基础上，依赖人工抽取连接统计、协议行为和载荷特征。在复杂网络环境中，这类方法通常面临维护成本高、泛化性不足等问题。深度学习方法通过端到端学习降低了对手工特征的依赖，尤其在大规模标注数据可用时表现突出。Transformer 架构通过注意力机制实现全局依赖建模，在多种时序与表征学习任务中表现优异\cite{vaswani2017attention}。
+
+\subsection{不平衡学习}
+网络攻击检测数据常常具有“良性样本远多于攻击样本、主流攻击远多于罕见攻击”的特点。仅以整体准确率作为指标会掩盖对极少数类攻击检测失败的问题。常用解决方法包括类别重加权、困难样本挖掘和重采样等。Focal Loss 通过降低易分类样本损失权重、强调困难样本训练信号，被广泛用于类不平衡任务\cite{lin2017focal}。
+
+\subsection{多源数据融合与威胁情报增强}
+多源数据融合强调在统一检测框架内联合利用流量、日志和外部威胁情报。流量特征刻画连接级统计模式，日志特征补充系统上下文，威胁情报则提供高风险 IP、端口、家族标签等先验信息。相较于单一模态，多源融合有望提高对复杂攻击链路的识别能力，但如何设计稳定有效的融合结构与融合权重，仍然是一个需要实验验证的问题。
+
+\section{方法设计}
+\subsection{总体框架}
+本文方法由三部分组成：
+\begin{enumerate}[leftmargin=2em]
+    \item 特征级融合的深度学习检测模型：输入为流量特征和日志特征。
+    \item 不平衡数据优化模块：包括类别权重、Focal Loss 和 WeightedRandomSampler。
+    \item 决策级威胁情报融合模块：将深度学习模型输出与威胁情报评分进一步融合。
+\end{enumerate}
+
+\subsection{多模态检测模型}
+模型主体采用多模态融合模块和 Transformer 编码器组成。流量特征与日志特征分别投影到统一维度后进行融合。在结构设计上，本文对比了两类方案：
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Cross-Attention}：双向交叉注意力建模模态间相互作用。
+    \item \textbf{Concat}：将两个模态投影结果直接拼接，再通过线性层映射到统一隐藏空间。
+\end{enumerate}
+实验显示，在当前任务设定下，Concat 方案表现优于 Cross-Attention，说明更复杂的交互结构并不必然带来更优效果。
+
+\subsection{不平衡优化策略}
+本文比较三类策略：
+\begin{enumerate}[leftmargin=2em]
+    \item 类别加权交叉熵；
+    \item Focal Loss + 类别权重；
+    \item WeightedRandomSampler 重采样。
+\end{enumerate}
+其中，WeightedRandomSampler 在少数类召回与整体性能之间取得了更稳定的折中。
+
+\subsection{威胁情报模拟与融合}
+由于在线威胁情报 API 尚未接入稳定服务，本文基于训练集中的攻击指示器统计生成模拟威胁情报库，主要包括：
+\begin{enumerate}[leftmargin=2em]
+    \item 高风险源 IP；
+    \item 高风险目的 IP；
+    \item 高风险目的端口；
+    \item 风险分数、置信度与对应攻击类型标签。
+\end{enumerate}
+检测阶段根据样本命中的 IOC 生成威胁情报评分向量，再与深度学习模型输出进行加权平均、软投票或 Dempster-Shafer 融合。
+
+\section{实验设计}
+\subsection{数据集}
+实验使用 BCCC-CSE-CIC-IDS-2018 数据集。该数据集是 CSE-CIC-IDS2018 的扩展版本，覆盖 Benign、Bot、Brute Force、DoS、SQL Injection 等多类流量攻击场景\cite{sharafaldin2018toward,bcccids2018}. 本文实验采用全量缓存数据进行训练、验证与测试划分，并以 7 类标签进行多分类任务。
+
+\subsection{实验环境}
+实验使用单卡 NVIDIA GeForce RTX 5090 服务器，CPU 25 核，内存 90GB。训练采用 BF16 自动混合精度、TF32 和多进程数据加载，以提升单轮训练效率。
+
+\subsection{评估指标}
+为更全面反映不平衡多分类任务的检测效果，本文使用：
+\begin{enumerate}[leftmargin=2em]
+    \item Accuracy；
+    \item Balanced Accuracy；
+    \item Macro-F1；
+    \item Precision / Recall / F1；
+    \item 分类报告与混淆矩阵。
+\end{enumerate}
+其中，Balanced Accuracy 与 Macro-F1 更能反映少数类检测能力。
+
+\subsection{实验矩阵}
+本轮实验共构造 11 组主实验，覆盖基线、结构消融、不平衡优化、威胁情报增强与组合设置。详见表\ref{tab:matrix}。
+
+\input{tables/experiment_matrix.tex}
+
+\section{实验结果与分析}
+\subsection{主实验结果}
+主实验结果如表\ref{tab:keyresults} 所示。可以观察到：
+\begin{enumerate}[leftmargin=2em]
+    \item 在纯深度学习模型中，`exp05` 的 Concat 多模态结构表现最佳；
+    \item `exp04` 在少数类召回角度最优，Balanced Accuracy 最高；
+    \item `exp10` 在引入模拟威胁情报后达到最高综合结果；
+    \item `exp11` 说明不平衡优化与威胁情报融合可以进一步提高少数类检测能力。
+\end{enumerate}
+
+\input{tables/key_results.tex}
+
+\subsection{消融实验分析}
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Cross-Attention vs Concat}：`exp05` 明显优于 `exp01`，说明当前任务下简单拼接优于交叉注意力。
+    \item \textbf{Traffic Only vs Log Only vs Multi-modal}：`exp06` 与 `exp08` 都弱于多模态，说明流量与日志之间存在互补信息。
+    \item \textbf{Imbalance Optimization}：类别权重和 Focal Loss 会显著牺牲整体准确率，而 WeightedRandomSampler 更均衡。
+\end{enumerate}
+
+\subsection{威胁情报融合分析}
+针对 `exp05` 和 `exp04`，本文进一步复用最优 checkpoint 进行了融合策略扫参，不重复训练，仅比较不同决策层融合方式。结果如表\ref{tab:fusionstudy} 所示。
+
+\input{tables/fusion_study.tex}
+
+实验表明：
+\begin{enumerate}[leftmargin=2em]
+    \item `soft_voting` 与 `weighted\_average(\alpha=0.5)` 在当前实现下等价；
+    \item 对于 `exp05`，当威胁情报权重增大到与深度学习输出同等量级时，模型综合性能大幅提升；
+    \item 对于 `exp04`，威胁情报增强主要改善少数类召回，对 Balanced Accuracy 提升更明显；
+    \item 新增的 `adaptive\_weighted\_average` 在当前实验中未超过简单软投票，说明仅依据分布尖锐度调整权重还不够。
+\end{enumerate}
+
+\subsection{结果有效性与局限性}
+需要特别说明的是，当前模拟威胁情报由训练集统计构建，而数据集采用随机划分，因此训练集和测试集之间共享了大量攻击基础设施指示器。融合分析显示，在当前划分方式下，IOC 对测试集样本具有极高覆盖率。这意味着威胁情报增强实验更适合解释为“已知攻击基础设施持续存在条件下的检测上界”，而非完全独立外部情报源带来的泛化能力提升。该结论应在论文中明确说明，以避免对威胁情报增强效果产生过度乐观解释。
+
+\section{复现与工程实现}
+\subsection{实验管理}
+本文将训练、评估、日志保存、配置归档、结果汇总和图表输出统一纳入实验流水线，保证每次实验都能保留完整全流程记录。单次实验目录包含：
+\begin{enumerate}[leftmargin=2em]
+    \item 最终配置；
+    \item 运行元数据；
+    \item 训练日志与评估日志；
+    \item 逐 epoch 历史；
+    \item 结构化指标摘要；
+    \item 分类报告与混淆矩阵；
+    \item 最优模型 checkpoint。
+\end{enumerate}
+
+\subsection{关键脚本}
+复现实验主要依赖以下脚本：
+\begin{enumerate}[leftmargin=2em]
+    \item `run_experiment.py`：单实验统一入口；
+    \item `run_experiment_matrix.py`：批量实验矩阵；
+    \item `summarize_experiments.py`：结果汇总；
+    \item `generate_synthetic_threat_intel.py`：生成模拟威胁情报；
+    \item `analyze_fusion_strategies.py`：基于现有 checkpoint 做融合策略扫参。
+\end{enumerate}
+
+\section{结论与展望}
+本文围绕“基于多源数据融合的网络攻击检测方法”展开实验研究，完成了多模态深度学习检测模型、不平衡数据优化与威胁情报增强的系统对比。实验结果表明：在当前任务设定下，简单拼接融合结构优于交叉注意力；WeightedRandomSampler 在少数类检测方面更具稳定性；引入模拟威胁情报后，决策层融合策略对性能影响显著。与此同时，实验也揭示出数据集随机划分带来的 IOC 重叠问题，这为后续研究提供了明确方向。
+
+后续可从以下方面继续改进：
+\begin{enumerate}[leftmargin=2em]
+    \item 引入按时间或攻击基础设施分组的更严格数据划分；
+    \item 接入真实外部威胁情报 API，构造独立于训练集的情报来源；
+    \item 将日志语义建模从统计特征扩展到序列或事件图结构；
+    \item 引入对抗鲁棒性、开放集识别和跨数据集泛化评估。
+\end{enumerate}
+
+\section*{附录：当前推荐引用的实验结论}
+\begin{enumerate}[leftmargin=2em]
+    \item 强调整体检测性能时，建议以 `exp05` 作为纯深度学习主模型。
+    \item 强调不平衡数据优化时，建议以 `exp04` 作为主推方案。
+    \item 强调威胁情报融合增强效果时，建议使用 `exp10`，但须同时说明其共享 IOC 先验的局限性。
+    \item 强调少数类检测提升时，建议比较 `exp04` 与 `exp11`。
+\end{enumerate}
+
+\bibliographystyle{plain}
+\bibliography{references}
+\end{document}
