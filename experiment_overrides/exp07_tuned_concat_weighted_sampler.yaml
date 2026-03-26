@@ -1,0 +1,6 @@
+model:
+  fusion_strategy: "concat"
+
+imbalance:
+  use_weighted_sampler: true
+  loss: "cross_entropy"
