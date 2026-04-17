@@ -32,7 +32,10 @@ fusion:
   alpha: 0.8  # DL模型权重（仅weighted_average模式）
 
 threat_intel_api:
-  url: "http://127.0.0.1:5000"  # 威胁情报API地址，留空则使用本地JSON
+  # 外部威胁情报API地址（D:/毕设相关/api 提供的FastAPI服务）
+  # 启动该服务: cd D:/毕设相关/api && docker compose up -d
+  # 注入CIC-IDS-2018攻击者IP: python populate_threat_intel.py
+  url: "http://localhost:8000"  # 留空则使用本地JSON fallback
 
 agent:
   mode: "rule"  # rule / llm

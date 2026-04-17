@@ -1,112 +1,185 @@
-"""数据准备脚本 - 从CIC-IDS-2018嵌套ZIP中提取CSV并采样"""
+"""数据准备脚本 - 从CIC-IDS-2018嵌套ZIP中提取CSV
 
+默认模式 (代表性子集, 约5分钟):
+    python prepare_data.py
+
+全量模式 (所有攻击类型+正常流量, 耗时较长):
+    python prepare_data.py --full
+
+单文件模式 (只处理指定的外层ZIP):
+    python prepare_data.py --only Wednesday_14_02_2018.zip
+"""
+
+import argparse
 import os
-import io
-import zipfile
-import pandas as pd
-import numpy as np
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
+
+# Windows控制台编码修正
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 
 DATASET_DIR = "data/数据集BCCC-CSE-CIC-IDS-2018"
 OUTPUT_DIR = "data/raw"
 
-# 选择代表性子集（含多种攻击类型，避免数据过大）
-SELECTED_ZIPS = [
-    "Wednesday_14_02_2018.zip",       # Brute Force FTP/SSH
-    "Thursday_15_02_2018.zip",        # DoS GoldenEye/Slowloris
-    "Friday-23-02-2018.zip",          # BF Web/XSS/SQL Injection
-    "Friday-02-03-2018.zip",          # Bot
+# 代表性子集 (覆盖多种攻击类型, 避免数据过大)
+SAMPLE_ZIPS = [
+    "Wednesday_14_02_2018.zip",   # Brute Force FTP/SSH
+    "Thursday_15_02_2018.zip",    # DoS GoldenEye/Slowloris
+    "Friday-23-02-2018.zip",      # BF Web/XSS/SQL Injection
+    "Friday-02-03-2018.zip",      # Bot
 ]
 
-# 每类最大采样数（控制数据规模）
-MAX_SAMPLES_PER_FILE = 20000
+# 全量数据集 (全部10个外层ZIP)
+ALL_ZIPS = [
+    "Wednesday_14_02_2018.zip",   # Brute Force FTP/SSH
+    "Thursday_15_02_2018.zip",    # DoS GoldenEye/Slowloris
+    "Friday-16-02-2018.zip",      # DoS Hulk / DoS SlowHTTPTest
+    "Tuesday_20_02_2018.zip",     # DDoS LOIC-HTTP
+    "Wednesday_21_02_2018.zip",   # DDoS HOIC
+    "Thursday-22-02-2018.zip",    # BF Web/XSS/SQL Injection
+    "Friday-23-02-2018.zip",      # BF Web/XSS/SQL Injection
+    "Wednesday-28-02-2018.zip",   # Benign only
+    "Thursday-01-03-2018.zip",    # Infiltration
+    "Friday-02-03-2018.zip",      # Bot
+]
 
 
-def extract_nested_zip(outer_zip_path: str, output_dir: str):
-    """从嵌套ZIP中提取CSV"""
-    extracted = []
-    outer = zipfile.ZipFile(outer_zip_path)
+def extract_inner_zip_with_powershell(
+    inner_zip_path: str, output_csv_dir: str
+) -> list:
+    """使用PowerShell解压内层ZIP (绕过Python对Deflate64的不支持)
 
-    for name in outer.namelist():
-        if not name.endswith(".zip"):
-            continue
+    Returns:
+        成功提取的CSV文件路径列表
+    """
+    saved = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [
+                "powershell", "-Command",
+                f"Expand-Archive -Path '{inner_zip_path}' "
+                f"-DestinationPath '{tmpdir}' -Force",
+            ],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or "").strip().splitlines()
+            first_err = err[0] if err else "unknown"
+            print(f"    [SKIP] PowerShell解压失败: {first_err[:100]}")
+            return saved
 
-        inner_name = name.split("/")[-1]
-        print(f"  提取: {inner_name}")
-
-        # 解压到临时目录再读取（避免压缩方法不支持问题）
-        import tempfile, subprocess
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # 先把内层zip写到临时目录
-            inner_zip_path = os.path.join(tmpdir, inner_name)
-            with open(inner_zip_path, "wb") as f:
-                f.write(outer.read(name))
-
-            # 用PowerShell解压内层zip
-            extract_dir = os.path.join(tmpdir, "extracted")
-            os.makedirs(extract_dir, exist_ok=True)
-            subprocess.run(
-                ["powershell", "-Command",
-                 f"Expand-Archive -Path '{inner_zip_path}' -DestinationPath '{extract_dir}' -Force"],
-                capture_output=True, check=True
-            )
-
-            # 读取CSV
-            for csv_file in Path(extract_dir).rglob("*.csv"):
+        for root, _, files in os.walk(tmpdir):
+            for f in files:
+                if not f.endswith(".csv"):
+                    continue
+                src = os.path.join(root, f)
+                dst = os.path.join(output_csv_dir, f)
+                if os.path.exists(dst):
+                    print(f"    [SKIP] 已存在: {f}")
+                    continue
                 try:
-                    df = pd.read_csv(csv_file, low_memory=False)
-                    if df.empty or "label" not in df.columns:
-                        print(f"    {csv_file.name}: 跳过（空或无label列）")
-                        continue
-                    print(f"    {csv_file.name}: {len(df)} rows, label={df['label'].unique()}")
-                    extracted.append(df)
+                    shutil.copy2(src, dst)
+                    size_mb = os.path.getsize(dst) / 1024 / 1024
+                    print(f"    [SAVE] {f} ({size_mb:.1f}MB)")
+                    saved.append(dst)
                 except Exception as e:
-                    print(f"    {csv_file.name}: 读取失败 - {e}")
+                    print(f"    [ERR]  复制 {f} 失败: {e}")
+    return saved
 
-    return extracted
+
+def process_outer_zip(outer_zip_path: str, output_dir: str) -> int:
+    """处理外层ZIP: 解压 -> 提取每个内层ZIP的CSV"""
+    if not os.path.exists(outer_zip_path):
+        print(f"  [MISS] 未找到: {os.path.basename(outer_zip_path)}")
+        return 0
+
+    count = 0
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 解压外层ZIP
+        result = subprocess.run(
+            [
+                "powershell", "-Command",
+                f"Expand-Archive -Path '{outer_zip_path}' "
+                f"-DestinationPath '{tmpdir}' -Force",
+            ],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"  [ERR] 外层解压失败")
+            return 0
+
+        # 递归寻找内层ZIP
+        inner_zips = []
+        for root, _, files in os.walk(tmpdir):
+            for f in files:
+                if f.endswith(".zip"):
+                    inner_zips.append(os.path.join(root, f))
+
+        print(f"  找到 {len(inner_zips)} 个内层ZIP")
+        for inner in sorted(inner_zips):
+            print(f"  解压: {os.path.basename(inner)}")
+            saved = extract_inner_zip_with_powershell(inner, output_dir)
+            count += len(saved)
+
+    return count
 
 
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    parser = argparse.ArgumentParser(
+        description="从CIC-IDS-2018嵌套ZIP中提取CSV文件"
+    )
+    parser.add_argument(
+        "--full", action="store_true",
+        help="提取全量数据集 (10个外层ZIP, 耗时较长, 需约100GB磁盘空间)",
+    )
+    parser.add_argument(
+        "--only", type=str, default=None,
+        help="只处理指定的外层ZIP文件名",
+    )
+    parser.add_argument(
+        "--output", type=str, default=OUTPUT_DIR,
+        help=f"CSV输出目录 (默认: {OUTPUT_DIR})",
+    )
+    args = parser.parse_args()
 
-    all_dfs = []
+    os.makedirs(args.output, exist_ok=True)
 
-    for zip_name in SELECTED_ZIPS:
+    if args.only:
+        target_zips = [args.only]
+        mode = f"单文件模式: {args.only}"
+    elif args.full:
+        target_zips = ALL_ZIPS
+        mode = f"全量模式 ({len(ALL_ZIPS)} 个外层ZIP)"
+    else:
+        target_zips = SAMPLE_ZIPS
+        mode = f"代表性子集模式 ({len(SAMPLE_ZIPS)} 个外层ZIP)"
+
+    print("=" * 60)
+    print(f"CIC-IDS-2018 数据提取 - {mode}")
+    print("=" * 60)
+
+    total_extracted = 0
+    for zip_name in target_zips:
         zip_path = os.path.join(DATASET_DIR, zip_name)
-        if not os.path.exists(zip_path):
-            print(f"跳过（未找到）: {zip_name}")
-            continue
-
         print(f"\n处理: {zip_name}")
-        dfs = extract_nested_zip(zip_path, OUTPUT_DIR)
-        all_dfs.extend(dfs)
+        print("-" * 60)
+        total_extracted += process_outer_zip(zip_path, args.output)
 
-    if not all_dfs:
-        print("未提取到任何数据！")
-        return
-
-    # 合并所有数据
-    full_data = pd.concat(all_dfs, ignore_index=True)
-    print(f"\n合并后总数据: {full_data.shape}")
-    print(f"标签分布:\n{full_data['label'].value_counts()}")
-
-    # 按类别分层采样
-    sampled_dfs = []
-    for label, group in full_data.groupby("label"):
-        n = min(len(group), MAX_SAMPLES_PER_FILE)
-        sampled = group.sample(n=n, random_state=42)
-        sampled_dfs.append(sampled)
-        print(f"  {label}: {len(group)} -> {n}")
-
-    sampled_data = pd.concat(sampled_dfs, ignore_index=True)
-    sampled_data = sampled_data.sample(frac=1, random_state=42).reset_index(drop=True)
-
-    output_path = os.path.join(OUTPUT_DIR, "cic_ids_2018_sampled.csv")
-    sampled_data.to_csv(output_path, index=False)
-    print(f"\n采样后数据保存至: {output_path}")
-    print(f"最终数据集大小: {sampled_data.shape}")
-    print(f"标签分布:\n{sampled_data['label'].value_counts()}")
+    print()
+    print("=" * 60)
+    print(f"提取完成: 共 {total_extracted} 个CSV文件保存至 {args.output}/")
+    print("=" * 60)
+    print()
+    print("下一步: 生成训练采样数据")
+    print("  python sample_data.py")
 
 
 if __name__ == "__main__":
